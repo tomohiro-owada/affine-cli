@@ -17,6 +17,23 @@ Built for **self-hosted AFFiNE** instances. Works with both email/password authe
 
 ## Installation
 
+### Install script
+
+```bash
+curl -sSL https://raw.githubusercontent.com/tomohiro-owada/affine-cli/main/install.sh | bash
+```
+
+Or download manually:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/tomohiro-owada/affine-cli/main/install.sh -o install.sh
+less install.sh
+bash install.sh
+rm install.sh
+```
+
+Or manually download from [GitHub Releases](https://github.com/tomohiro-owada/affine-cli/releases).
+
 ### From source
 
 ```bash
