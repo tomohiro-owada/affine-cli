@@ -3,6 +3,7 @@ package output
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"testing"
 )
@@ -86,6 +87,50 @@ func TestErrorWithCode(t *testing.T) {
 	}
 	if err.Error() != "bad value: xyz" {
 		t.Errorf("error = %q, want 'bad value: xyz'", err.Error())
+	}
+}
+
+func TestWarnWithCode_agentJSONOnStderr(t *testing.T) {
+	oldOut := os.Stdout
+	oldErr := os.Stderr
+	defer func() {
+		os.Stdout = oldOut
+		os.Stderr = oldErr
+	}()
+
+	outR, outW, errPipe := os.Pipe()
+	if errPipe != nil {
+		t.Fatal(errPipe)
+	}
+	defer outR.Close()
+	os.Stdout = outW
+
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = errW
+
+	WarnWithCode("YJS_TITLE_ENRICHMENT_FAILED", "doc list title enrichment (Yjs): %v", "oops")
+
+	errW.Close()
+	outW.Close()
+	os.Stdout = oldOut
+	os.Stderr = oldErr
+
+	body, err := io.ReadAll(errR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resp ErrorResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("stderr: %s decode: %v", body, err)
+	}
+	if resp.Code != "YJS_TITLE_ENRICHMENT_FAILED" {
+		t.Errorf("code = %q", resp.Code)
+	}
+	if resp.Error != "doc list title enrichment (Yjs): oops" {
+		t.Errorf("error = %q", resp.Error)
 	}
 }
 

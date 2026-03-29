@@ -10,6 +10,7 @@ import (
 	"github.com/tomohiro-owada/affine-cli/internal/graphql"
 	"github.com/tomohiro-owada/affine-cli/internal/output"
 	"github.com/tomohiro-owada/affine-cli/internal/validate"
+	"github.com/tomohiro-owada/affine-cli/internal/workspacetitles"
 )
 
 func init() {
@@ -30,6 +31,7 @@ func init() {
 	docListCmd.Flags().Int("first", 20, "Number of docs to return")
 	docListCmd.Flags().Int("offset", 0, "Offset for pagination")
 	docListCmd.Flags().String("after", "", "Cursor for pagination")
+	docListCmd.Flags().Bool("skip-yjs-titles", false, "Skip merging display titles from workspace Yjs (GraphQL only)")
 
 	docGetCmd.Flags().String("doc-id", "", "Document ID (required)")
 	_ = docGetCmd.MarkFlagRequired("doc-id")
@@ -97,6 +99,14 @@ var docListCmd = &cobra.Command{
 		data, err := gql.Request(ctx(), graphql.ListDocsQuery, vars)
 		if err != nil {
 			return err
+		}
+		skipYjs, _ := cmd.Flags().GetBool("skip-yjs-titles")
+		if !skipYjs {
+			if titles, err := workspacetitles.FetchPageTitles(ctx(), cfg.BaseURL, ws, gql.Cookie(), gql.Bearer(), gql.ExtraHeaders()); err == nil && len(titles) > 0 {
+				data = workspacetitles.MergeDocListTitles(data, titles)
+			} else if err != nil {
+				output.WarnWithCode("YJS_TITLE_ENRICHMENT_FAILED", "doc list title enrichment (Yjs): %v", err)
+			}
 		}
 		if fields := getFields(cmd); len(fields) > 0 {
 			output.FilteredJSON(data, fields)

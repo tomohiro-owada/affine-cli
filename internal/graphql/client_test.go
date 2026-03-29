@@ -159,6 +159,19 @@ func TestRequestWithVariables(t *testing.T) {
 	}
 }
 
+func TestExtraHeadersReturnsCopy(t *testing.T) {
+	c := NewClient("http://example", "token", "c=1", map[string]string{"X-A": "1", "X-B": "2"})
+	h := c.ExtraHeaders()
+	if len(h) != 2 || h["X-A"] != "1" {
+		t.Fatalf("ExtraHeaders = %v", h)
+	}
+	h["X-A"] = "mutated"
+	h2 := c.ExtraHeaders()
+	if h2["X-A"] != "1" {
+		t.Error("mutating returned map affected client internals")
+	}
+}
+
 func TestSetCookie(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Cookie") != "new-cookie" {

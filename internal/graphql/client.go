@@ -144,6 +144,28 @@ func (c *Client) SetCookie(cookie string) {
 	c.cookie = cookie
 }
 
+// Cookie returns the session cookie header value (may be empty).
+func (c *Client) Cookie() string {
+	return c.cookie
+}
+
+// Bearer returns the API token sent as Authorization Bearer (may be empty).
+func (c *Client) Bearer() string {
+	return c.bearer
+}
+
+// ExtraHeaders returns a copy of configured AFFINE_HEADERS_JSON headers (may be empty).
+func (c *Client) ExtraHeaders() map[string]string {
+	if len(c.headers) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(c.headers))
+	for k, v := range c.headers {
+		out[k] = v
+	}
+	return out
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s

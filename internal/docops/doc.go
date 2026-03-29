@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/tomohiro-owada/affine-cli/internal/yjs"
@@ -14,6 +16,217 @@ func GenerateDocID() string {
 	b := make([]byte, 8)
 	rand.Read(b)
 	return hex.EncodeToString(b)[:10]
+}
+
+// blockChildIDs returns ordered child block IDs from sys:children (Y.Array as []any).
+func blockChildIDs(b map[string]any) []string {
+	raw, ok := b["sys:children"]
+	if !ok || raw == nil {
+		return nil
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, x := range arr {
+		switch v := x.(type) {
+		case string:
+			out = append(out, v)
+		case float64:
+			out = append(out, strconv.FormatInt(int64(v), 10))
+		}
+	}
+	return out
+}
+
+// plainTextFromProp reads a string or { delta: [...] } snapshot from a block map key.
+func plainTextFromProp(b map[string]any, key string) string {
+	if s, ok := b[key].(string); ok {
+		return s
+	}
+	m, ok := b[key].(map[string]any)
+	if !ok {
+		return ""
+	}
+	delta, ok := m["delta"].([]any)
+	if !ok {
+		return ""
+	}
+	var sb strings.Builder
+	for _, op := range delta {
+		om, ok := op.(map[string]any)
+		if !ok {
+			continue
+		}
+		if ins, ok := om["insert"].(string); ok {
+			sb.WriteString(ins)
+		}
+	}
+	return sb.String()
+}
+
+// blockPropPlainText returns prop:text as a string, including structured { delta: [...] } snapshots.
+func blockPropPlainText(b map[string]any) string {
+	return plainTextFromProp(b, "prop:text")
+}
+
+func typeFromAny(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch x := v.(type) {
+	case string:
+		if strings.TrimSpace(x) == "" {
+			return ""
+		}
+		if x == "$blocksuite:internal:native$" {
+			return ""
+		}
+		return normalizeBlockType(x)
+	case float64:
+		n := int(x)
+		if n >= 1 && n <= 6 && float64(n) == x {
+			return "h" + strconv.Itoa(n)
+		}
+	case map[string]any:
+		// BlockSuite boxed natives: { type: "$blocksuite:internal:native$", value: "h1" }
+		if tag, ok := x["type"].(string); ok && tag == "$blocksuite:internal:native$" {
+			if t := typeFromAny(x["value"]); t != "" {
+				return t
+			}
+		}
+		for _, key := range []string{"value", "type", "kind"} {
+			if t := typeFromAny(x[key]); t != "" {
+				return t
+			}
+		}
+	}
+	return ""
+}
+
+// blockContentType returns prop:type / sys:type for paragraph and list blocks in a form
+// our markdown export understands (handles case variants, numeric heading levels, aliases).
+func blockContentType(b map[string]any) string {
+	var candidates []string
+	add := func(t string) {
+		if t == "" {
+			return
+		}
+		for _, x := range candidates {
+			if x == t {
+				return
+			}
+		}
+		candidates = append(candidates, t)
+	}
+	for _, key := range []string{"prop:type", "prop:type.value", "sys:type", "type"} {
+		add(typeFromAny(b[key]))
+	}
+	for k, v := range b {
+		if k == "prop:type" || k == "prop:type.value" {
+			continue
+		}
+		if strings.HasPrefix(k, "prop:type") {
+			add(typeFromAny(v))
+		}
+	}
+	for _, t := range candidates {
+		if len(t) == 2 && t[0] == 'h' && t[1] >= '1' && t[1] <= '6' {
+			return t
+		}
+	}
+	if len(candidates) > 0 {
+		return candidates[0]
+	}
+	return ""
+}
+
+func normalizeBlockType(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	switch s {
+	case "h1", "h2", "h3", "h4", "h5", "h6",
+		"text", "quote",
+		"bulleted", "numbered", "todo", "toggle":
+		return s
+	}
+	if strings.HasPrefix(s, "heading") {
+		rest := strings.TrimPrefix(s, "heading")
+		if rest == "" {
+			return "h1"
+		}
+		if n, err := strconv.Atoi(rest); err == nil && n >= 1 && n <= 6 {
+			return "h" + strconv.Itoa(n)
+		}
+	}
+	switch s {
+	case "subtitle", "subheading":
+		return "h2"
+	case "title":
+		return "h1"
+	}
+	return s
+}
+
+func pageMarkdownPrefix(blocks map[string]map[string]any) string {
+	t := pageTitleFromBlocks(blocks)
+	if t == "" {
+		return ""
+	}
+	return "# " + t + "\n\n"
+}
+
+// pageTitleFromBlocks returns the affine:page document title as plain text.
+func pageTitleFromBlocks(blocks map[string]map[string]any) string {
+	for _, b := range blocks {
+		flavour, _ := b["sys:flavour"].(string)
+		if flavour != "affine:page" {
+			continue
+		}
+		t := strings.TrimSpace(plainTextFromProp(b, "prop:title"))
+		if t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// stripMirrorOfExportedDocTitle removes a leading "# <title>" line (and following blank lines)
+// when it matches the page title. ExportMarkdown prepends that line via pageMarkdownPrefix; without
+// stripping, replace-markdown would create a duplicate h1 in the note body.
+func stripMirrorOfExportedDocTitle(md string, docTitle string) string {
+	docTitle = strings.TrimSpace(docTitle)
+	if docTitle == "" {
+		return md
+	}
+	lines := strings.Split(md, "\n")
+	i := 0
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
+	}
+	if i >= len(lines) {
+		return md
+	}
+	trimmed := strings.TrimSpace(lines[i])
+	if !strings.HasPrefix(trimmed, "#") {
+		return md
+	}
+	level := 0
+	for level < len(trimmed) && level < 6 && trimmed[level] == '#' {
+		level++
+	}
+	if level != 1 {
+		return md
+	}
+	headingText := strings.TrimSpace(trimmed[level:])
+	if !strings.EqualFold(headingText, docTitle) {
+		return md
+	}
+	i++
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
+	}
+	return strings.Join(lines[i:], "\n")
 }
 
 // CreateDoc creates a new empty document in the workspace.
@@ -135,16 +348,24 @@ func (s *Session) ReadDoc(docID string) ([]BlockInfo, string, error) {
 	}
 
 	var result []BlockInfo
-	var textParts []string
 
 	for id, b := range blocks {
 		flavour, _ := b["sys:flavour"].(string)
-		btype, _ := b["sys:type"].(string)
-		text, _ := b["prop:text"].(string)
-		lang, _ := b["prop:language"].(string)
-
 		if flavour == "affine:page" || flavour == "affine:surface" || flavour == "affine:note" {
 			continue
+		}
+
+		btype := blockContentType(b)
+		text := blockPropPlainText(b)
+		lang, _ := b["prop:language"].(string)
+
+		liveType := s.Engine.BlockPropTypeString(engDocID, id)
+		if liveType != "" {
+			btype = normalizeBlockType(liveType)
+		}
+		liveText := s.Engine.BlockPropTextString(engDocID, id)
+		if liveText != "" {
+			text = liveText
 		}
 
 		info := BlockInfo{
@@ -155,11 +376,40 @@ func (s *Session) ReadDoc(docID string) ([]BlockInfo, string, error) {
 			Language: lang,
 		}
 		result = append(result, info)
-		if text != "" {
-			textParts = append(textParts, text)
-		}
 	}
 
+	order, ordErr := s.Engine.NoteChildOrder(engDocID)
+	if ordErr == nil && len(order) > 0 {
+		idx := make(map[string]int, len(order))
+		for i, bid := range order {
+			idx[bid] = i
+		}
+		sort.SliceStable(result, func(i, j int) bool {
+			ii, okI := idx[result[i].ID]
+			ij, okJ := idx[result[j].ID]
+			switch {
+			case okI && okJ:
+				return ii < ij
+			case okI:
+				return true
+			case okJ:
+				return false
+			default:
+				return result[i].ID < result[j].ID
+			}
+		})
+	} else {
+		sort.SliceStable(result, func(i, j int) bool {
+			return result[i].ID < result[j].ID
+		})
+	}
+
+	var textParts []string
+	for _, info := range result {
+		if info.Text != "" {
+			textParts = append(textParts, info.Text)
+		}
+	}
 	plainText := strings.Join(textParts, "\n")
 	return result, plainText, nil
 }
@@ -201,69 +451,34 @@ func (s *Session) DeleteDoc(docID string) error {
 	return nil
 }
 
-// ExportMarkdown exports a document as markdown.
-func (s *Session) ExportMarkdown(docID string) (string, error) {
-	engDocID, err := s.LoadDoc(docID)
-	if err != nil {
-		return "", err
-	}
-	defer s.Engine.FreeDoc(engDocID)
+// exportEngine reads live block props during markdown export (implemented by *yjs.Engine).
+type exportEngine interface {
+	BlockPropTypeString(docID int, blockID string) string
+	BlockPropTextAffineMarkdown(docID int, blockID string) string
+}
 
-	blocks, err := s.Engine.ReadBlocks(engDocID)
-	if err != nil {
-		return "", err
-	}
-
-	// Get ordered block IDs from the note's children
-	script := fmt.Sprintf(`
-		(function() {
-			var doc = globalThis._docs[%d];
-			var blocks = doc.getMap("blocks");
-			var order = [];
-			// Find note block and get children order
-			blocks.forEach(function(block, id) {
-				if (!(block instanceof Y.Map)) return;
-				var flavour = block.get("sys:flavour");
-				if (flavour === "affine:note") {
-					var children = block.get("sys:children");
-					if (children instanceof Y.Array) {
-						children.forEach(function(childId) {
-							order.push(childId);
-						});
-					}
-				}
-			});
-			return JSON.stringify(order);
-		})()
-	`, engDocID)
-	orderJSON, err := s.Engine.RunScript(script)
-	if err != nil {
-		return "", err
-	}
-
-	// Parse order
-	var order []string
-	if orderJSON != "" && orderJSON != "[]" {
-		// Simple JSON array parse
-		orderJSON = strings.Trim(orderJSON, "[]")
-		for _, item := range strings.Split(orderJSON, ",") {
-			item = strings.Trim(item, `" `)
-			if item != "" {
-				order = append(order, item)
-			}
-		}
-	}
-
+// buildMarkdownExport applies the same rules as ExportMarkdown to an in-memory doc.
+// Used by ExportMarkdown and by tests (boxed prop:type, flat keys, etc.).
+func buildMarkdownExport(e exportEngine, engDocID int, blocks map[string]map[string]any, order []string) string {
 	var md strings.Builder
+	if prefix := pageMarkdownPrefix(blocks); prefix != "" {
+		md.WriteString(prefix)
+	}
 
-	renderBlock := func(id string) {
+	emitBlock := func(id string) {
 		b, ok := blocks[id]
 		if !ok {
 			return
 		}
 		flavour, _ := b["sys:flavour"].(string)
-		btype, _ := b["sys:type"].(string)
-		text, _ := b["prop:text"].(string)
+		btype := blockContentType(b)
+		if live := e.BlockPropTypeString(engDocID, id); live != "" {
+			btype = normalizeBlockType(live)
+		}
+		text := blockPropPlainText(b)
+		if liveMd := e.BlockPropTextAffineMarkdown(engDocID, id); liveMd != "" {
+			text = liveMd
+		}
 		lang, _ := b["prop:language"].(string)
 
 		switch flavour {
@@ -290,7 +505,7 @@ func (s *Session) ExportMarkdown(docID string) (string, error) {
 			}
 		case "affine:list":
 			switch btype {
-			case "bulleted":
+			case "bulleted", "toggle":
 				md.WriteString("- " + text + "\n")
 			case "numbered":
 				md.WriteString("1. " + text + "\n")
@@ -311,17 +526,70 @@ func (s *Session) ExportMarkdown(docID string) (string, error) {
 		}
 	}
 
-	if len(order) > 0 {
-		for _, id := range order {
-			renderBlock(id)
+	var walk func(string)
+	walk = func(id string) {
+		b, ok := blocks[id]
+		if !ok {
+			return
 		}
-	} else {
-		for id := range blocks {
-			renderBlock(id)
+		flavour, _ := b["sys:flavour"].(string)
+		// Descend into callouts (and similar hubs) so nested headings/lists export.
+		if flavour == "affine:callout" {
+			for _, cid := range blockChildIDs(b) {
+				walk(cid)
+			}
+			return
+		}
+		emitBlock(id)
+		if flavour == "affine:list" {
+			for _, cid := range blockChildIDs(b) {
+				walk(cid)
+			}
+		}
+		if flavour == "affine:paragraph" {
+			for _, cid := range blockChildIDs(b) {
+				walk(cid)
+			}
 		}
 	}
 
-	return md.String(), nil
+	if len(order) > 0 {
+		for _, id := range order {
+			walk(id)
+		}
+	} else {
+		ids := make([]string, 0, len(blocks))
+		for id := range blocks {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			walk(id)
+		}
+	}
+
+	return md.String()
+}
+
+// ExportMarkdown exports a document as markdown.
+func (s *Session) ExportMarkdown(docID string) (string, error) {
+	engDocID, err := s.LoadDoc(docID)
+	if err != nil {
+		return "", err
+	}
+	defer s.Engine.FreeDoc(engDocID)
+
+	blocks, err := s.Engine.ReadBlocks(engDocID)
+	if err != nil {
+		return "", err
+	}
+
+	order, err := s.Engine.NoteChildOrder(engDocID)
+	if err != nil {
+		return "", err
+	}
+
+	return buildMarkdownExport(s.Engine, engDocID, blocks, order), nil
 }
 
 // AppendParagraph appends a single paragraph block to a document.
@@ -464,6 +732,12 @@ func (s *Session) ReplaceWithMarkdown(docID, markdown string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+
+	blocks, err := s.Engine.ReadBlocks(engDocID)
+	if err != nil {
+		return 0, fmt.Errorf("read blocks for title strip: %w", err)
+	}
+	markdown = stripMirrorOfExportedDocTitle(markdown, pageTitleFromBlocks(blocks))
 
 	lines := parseMarkdownToLines(markdown)
 
@@ -668,26 +942,23 @@ func parseMarkdownToLines(md string) []markdownLine {
 			continue
 		}
 
-		// Headings
-		if strings.HasPrefix(trimmed, "# ") {
-			result = append(result, markdownLine{flavour: "affine:paragraph", btype: "h1", text: strings.TrimPrefix(trimmed, "# ")})
-			i++
-			continue
-		}
-		if strings.HasPrefix(trimmed, "## ") {
-			result = append(result, markdownLine{flavour: "affine:paragraph", btype: "h2", text: strings.TrimPrefix(trimmed, "## ")})
-			i++
-			continue
-		}
-		if strings.HasPrefix(trimmed, "### ") {
-			result = append(result, markdownLine{flavour: "affine:paragraph", btype: "h3", text: strings.TrimPrefix(trimmed, "### ")})
-			i++
-			continue
-		}
-		if strings.HasPrefix(trimmed, "#### ") {
-			result = append(result, markdownLine{flavour: "affine:paragraph", btype: "h4", text: strings.TrimPrefix(trimmed, "#### ")})
-			i++
-			continue
+		// ATX headings: 1–6 leading '#' marks; space after hashes is optional (e.g. "# Title" or "#Title"). Adds h5/h6.
+		if strings.HasPrefix(trimmed, "#") {
+			level := 0
+			for level < len(trimmed) && level < 6 && trimmed[level] == '#' {
+				level++
+			}
+			if level > 0 {
+				title := strings.TrimSpace(trimmed[level:])
+				levelTypes := []string{"h1", "h2", "h3", "h4", "h5", "h6"}
+				result = append(result, markdownLine{
+					flavour: "affine:paragraph",
+					btype:   levelTypes[level-1],
+					text:    title,
+				})
+				i++
+				continue
+			}
 		}
 
 		// Blockquote

@@ -2,6 +2,7 @@ package yjs
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"testing"
 )
 
@@ -315,6 +316,36 @@ func TestParseInlineMarkdown(t *testing.T) {
 			"normal **bold** and *italic* and `code`",
 			`[{"text":"normal ","attrs":{}},{"text":"bold","attrs":{"bold":true}},{"text":" and ","attrs":{}},{"text":"italic","attrs":{"italic":true}},{"text":" and ","attrs":{}},{"text":"code","attrs":{"code":true}}]`,
 		},
+		{
+			"highlight bg green",
+			"==bg:green::[2]==",
+			`[{"text":"[2]","attrs":{"background":"green"}}]`,
+		},
+		{
+			"highlight shorthand yellow",
+			"==note==",
+			`[{"text":"note","attrs":{"background":"yellow"}}]`,
+		},
+		{
+			"highlight with bold inside",
+			"==bg:green::**x**==",
+			`[{"text":"x","attrs":{"bold":true,"background":"green"}}]`,
+		},
+		{
+			"foreground red",
+			"==fg:red::warning==",
+			`[{"text":"warning","attrs":{"color":"red"}}]`,
+		},
+		{
+			"background and foreground",
+			"==bg:yellow|fg:red::STOP==",
+			`[{"text":"STOP","attrs":{"background":"yellow","color":"red"}}]`,
+		},
+		{
+			"fg with bold inside",
+			"==fg:blue::**n**==",
+			`[{"text":"n","attrs":{"bold":true,"color":"blue"}}]`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -400,6 +431,128 @@ func TestCreateFormattedBlock(t *testing.T) {
 	}
 	if !contains(val, `"code":true`) {
 		t.Error("delta missing code attribute")
+	}
+}
+
+func TestBlockPropTextAffineMarkdown_preservesBackground(t *testing.T) {
+	e, err := NewEngine()
+	if err != nil {
+		t.Fatal(err)
+	}
+	docID, _ := e.NewDoc()
+	const md = "Populate JZ spreadsheet ==bg:green::[2]=="
+	err = e.CreateFormattedBlock(docID, "hi1", "affine:list", "todo", md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := e.BlockPropTextAffineMarkdown(docID, "hi1")
+	if got != md {
+		t.Fatalf("BlockPropTextAffineMarkdown = %q, want %q", got, md)
+	}
+	deltaJSON, err := e.RunScript(`
+		(function() {
+			var b = globalThis._docs[0].getMap("blocks").get("hi1");
+			return JSON.stringify(b.get("prop:text").toDelta());
+		})()
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(deltaJSON, `"background":"green"`) {
+		t.Fatalf("delta missing green background: %s", deltaJSON)
+	}
+}
+
+func TestBlockPropTextAffineMarkdown_preservesForegroundAndBoth(t *testing.T) {
+	e, err := NewEngine()
+	if err != nil {
+		t.Fatal(err)
+	}
+	docID, _ := e.NewDoc()
+
+	const fgMd = "Status: ==fg:red::blocked=="
+	err = e.CreateFormattedBlock(docID, "f1", "affine:paragraph", "text", fgMd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := e.BlockPropTextAffineMarkdown(docID, "f1"); got != fgMd {
+		t.Fatalf("fg round-trip = %q, want %q", got, fgMd)
+	}
+
+	const bothMd = "==bg:yellow|fg:red::ALERT=="
+	err = e.CreateFormattedBlock(docID, "f2", "affine:paragraph", "text", bothMd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := e.BlockPropTextAffineMarkdown(docID, "f2"); got != bothMd {
+		t.Fatalf("bg+fg round-trip = %q, want %q", got, bothMd)
+	}
+	delta2, err := e.RunScript(`
+		(function() {
+			return JSON.stringify(globalThis._docs[0].getMap("blocks").get("f2").get("prop:text").toDelta());
+		})()
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(delta2, `"background":"yellow"`) || !contains(delta2, `"color":"red"`) {
+		t.Fatalf("delta missing bg+fg: %s", delta2)
+	}
+}
+
+func TestWorkspacePageListJSON_ParentIdFromYMap(t *testing.T) {
+	e, err := NewEngine()
+	if err != nil {
+		t.Fatal(err)
+	}
+	docID, _ := e.NewDoc()
+	_, err = e.RunScript(`
+		(function() {
+			var doc = globalThis._docs[0];
+			var meta = doc.getMap("meta");
+			var pages = new Y.Array();
+			var work = new Y.Map();
+			work.set("id", "work-page-id");
+			var wtitle = new Y.Text();
+			wtitle.insert(0, "Work", {});
+			work.set("title", wtitle);
+			work.set("createDate", 1000);
+			pages.push([work]);
+			var todo = new Y.Map();
+			todo.set("id", "todo-page-id");
+			todo.set("parentId", "work-page-id");
+			var ttitle = new Y.Text();
+			ttitle.insert(0, "todo", {});
+			todo.set("title", ttitle);
+			todo.set("createDate", 2000);
+			pages.push([todo]);
+			meta.set("pages", pages);
+			return "ok";
+		})()
+	`)
+	if err != nil {
+		t.Fatalf("seed workspace meta: %v", err)
+	}
+	raw, err := e.WorkspacePageListJSON(docID, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	var todoRow map[string]any
+	for _, r := range rows {
+		if r["id"] == "todo-page-id" {
+			todoRow = r
+			break
+		}
+	}
+	if todoRow == nil {
+		t.Fatalf("no todo row in %s", string(raw))
+	}
+	if got, _ := todoRow["parentId"].(string); got != "work-page-id" {
+		t.Errorf("parentId = %q, want work-page-id", got)
 	}
 }
 

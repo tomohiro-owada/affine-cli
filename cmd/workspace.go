@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tomohiro-owada/affine-cli/internal/graphql"
 	"github.com/tomohiro-owada/affine-cli/internal/output"
+	"github.com/tomohiro-owada/affine-cli/internal/workspacetitles"
 )
 
 func init() {
@@ -17,6 +18,7 @@ func init() {
 	workspaceCmd.AddCommand(workspaceCreateCmd)
 	workspaceCmd.AddCommand(workspaceUpdateCmd)
 	workspaceCmd.AddCommand(workspaceDeleteCmd)
+	workspaceCmd.AddCommand(workspaceListPagesCmd)
 
 	workspaceCreateCmd.Flags().String("name", "Untitled", "Workspace name")
 
@@ -42,6 +44,23 @@ var workspaceListCmd = &cobra.Command{
 			return nil
 		}
 		output.RawJSON(data)
+		return nil
+	},
+}
+
+var workspaceListPagesCmd = &cobra.Command{
+	Use:   "list-pages",
+	Short: "List pages (id, title, parentId) from workspace Yjs index for folder navigation",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ws, err := requireWorkspace()
+		if err != nil {
+			return err
+		}
+		raw, err := workspacetitles.FetchPageList(ctx(), cfg.BaseURL, ws, gql.Cookie(), gql.Bearer(), gql.ExtraHeaders())
+		if err != nil {
+			return err
+		}
+		output.RawJSON(raw)
 		return nil
 	},
 }

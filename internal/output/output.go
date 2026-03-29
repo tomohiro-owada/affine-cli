@@ -163,6 +163,20 @@ func ErrorWithCode(code, format string, args ...any) error {
 	return err
 }
 
+// WarnWithCode writes a non-fatal warning to stderr. In agent mode (stdout not a TTY),
+// emits JSON with the same error/code shape as ErrorWithCode so piped consumers stay consistent.
+func WarnWithCode(code, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	if isAgent() {
+		resp := ErrorResponse{Error: msg, Code: code}
+		enc := json.NewEncoder(os.Stderr)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(resp)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Warning [%s]: %s\n", code, msg)
+}
+
 // DryRun prints what would happen without executing.
 func DryRun(action string, details map[string]any) {
 	if isAgent() {

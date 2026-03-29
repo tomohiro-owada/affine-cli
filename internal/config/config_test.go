@@ -6,12 +6,18 @@ import (
 	"testing"
 )
 
+func affinityConfigPathUnderHome(home string) string {
+	return filepath.Join(home, ".config", "affinity", "config.json")
+}
+
 func TestLoadDefaults(t *testing.T) {
-	// Clear all env vars to test defaults
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
 	for _, key := range []string{
 		"AFFINE_BASE_URL", "AFFINE_GRAPHQL_PATH", "AFFINE_API_TOKEN",
 		"AFFINE_COOKIE", "AFFINE_EMAIL", "AFFINE_PASSWORD",
 		"AFFINE_WORKSPACE_ID", "AFFINE_HEADERS_JSON", "AFFINE_WS_CLIENT_VERSION",
+		"AFFINE_CONFIG_FILE",
 	} {
 		t.Setenv(key, "")
 	}
@@ -29,6 +35,8 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 func TestLoadFromEnv(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AFFINE_CONFIG_FILE", "")
 	t.Setenv("AFFINE_BASE_URL", "https://test.example.com")
 	t.Setenv("AFFINE_API_TOKEN", "test-token-123")
 	t.Setenv("AFFINE_WORKSPACE_ID", "ws-abc")
@@ -50,6 +58,8 @@ func TestLoadFromEnv(t *testing.T) {
 }
 
 func TestGraphQLEndpoint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AFFINE_CONFIG_FILE", "")
 	t.Setenv("AFFINE_BASE_URL", "https://affine.example.com")
 	t.Setenv("AFFINE_GRAPHQL_PATH", "/graphql")
 
@@ -61,6 +71,8 @@ func TestGraphQLEndpoint(t *testing.T) {
 }
 
 func TestWSEndpoint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AFFINE_CONFIG_FILE", "")
 	t.Setenv("AFFINE_BASE_URL", "https://affine.example.com")
 	t.Setenv("AFFINE_GRAPHQL_PATH", "/graphql")
 
@@ -72,6 +84,8 @@ func TestWSEndpoint(t *testing.T) {
 }
 
 func TestWSEndpointHTTP(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AFFINE_CONFIG_FILE", "")
 	t.Setenv("AFFINE_BASE_URL", "http://localhost:3010")
 	t.Setenv("AFFINE_GRAPHQL_PATH", "/graphql")
 
@@ -99,25 +113,29 @@ func TestNormalizeURL(t *testing.T) {
 	}
 }
 
-func TestLoadConfigFile(t *testing.T) {
-	// Create a temp config file
+func TestLoadConfigAffinityJSON(t *testing.T) {
 	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".config", "affine-mcp")
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".config", "affinity"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	configPath := filepath.Join(configDir, "config")
-	content := "AFFINE_BASE_URL=https://from-file.example.com\napiToken=file-token-xyz\n# comment line\n\ndefaultWorkspaceId=ws-from-file\n"
+	configPath := affinityConfigPathUnderHome(tmpDir)
+	content := `{
+  "url": "https://from-file.example.com",
+  "api_token": "file-token-xyz",
+  "workspace_id": "ws-from-file",
+  "graphql_path": "/gql"
+}
+`
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Override HOME so loadConfigFile finds our temp file
 	t.Setenv("HOME", tmpDir)
-	// Clear env vars so file values take effect
+	t.Setenv("AFFINE_CONFIG_FILE", "")
 	t.Setenv("AFFINE_BASE_URL", "")
 	t.Setenv("AFFINE_API_TOKEN", "")
 	t.Setenv("AFFINE_WORKSPACE_ID", "")
+	t.Setenv("AFFINE_GRAPHQL_PATH", "")
 
 	cfg := Load()
 	if cfg.BaseURL != "https://from-file.example.com" {
@@ -129,19 +147,60 @@ func TestLoadConfigFile(t *testing.T) {
 	if cfg.DefaultWorkspaceID != "ws-from-file" {
 		t.Errorf("DefaultWorkspaceID = %q, want %q", cfg.DefaultWorkspaceID, "ws-from-file")
 	}
+	if cfg.GraphQLPath != "/gql" {
+		t.Errorf("GraphQLPath = %q, want %q", cfg.GraphQLPath, "/gql")
+	}
 }
 
 func TestEnvOverridesFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".config", "affine-mcp")
-	_ = os.MkdirAll(configDir, 0o755)
-	_ = os.WriteFile(filepath.Join(configDir, "config"), []byte("AFFINE_BASE_URL=https://file.example.com\n"), 0o644)
+	_ = os.MkdirAll(filepath.Join(tmpDir, ".config", "affinity"), 0o755)
+	_ = os.WriteFile(affinityConfigPathUnderHome(tmpDir), []byte(`{"url": "https://file.example.com"}`), 0o644)
 
 	t.Setenv("HOME", tmpDir)
+	t.Setenv("AFFINE_CONFIG_FILE", "")
 	t.Setenv("AFFINE_BASE_URL", "https://env.example.com")
 
 	cfg := Load()
 	if cfg.BaseURL != "https://env.example.com" {
 		t.Errorf("env should override file: BaseURL = %q, want %q", cfg.BaseURL, "https://env.example.com")
+	}
+}
+
+// AFFINE_CONFIG_FILE is ignored; only ~/.config/affinity/config.json is read.
+func TestAFFINE_CONFIG_FILEIgnored(t *testing.T) {
+	tmpDir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(tmpDir, ".config", "affinity"), 0o755)
+	custom := filepath.Join(tmpDir, "my-affine.conf")
+	_ = os.WriteFile(custom, []byte(`{"url":"https://wrong.example.com"}`), 0o644)
+	_ = os.WriteFile(affinityConfigPathUnderHome(tmpDir), []byte(`{"url":"https://affinity-path.example.com","workspace_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}`), 0o644)
+
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("AFFINE_CONFIG_FILE", custom)
+	t.Setenv("AFFINE_BASE_URL", "")
+	t.Setenv("AFFINE_WORKSPACE_ID", "")
+
+	cfg := Load()
+	if cfg.BaseURL != "https://affinity-path.example.com" {
+		t.Errorf("BaseURL = %q, want affinity config path only", cfg.BaseURL)
+	}
+	if cfg.DefaultWorkspaceID != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
+		t.Errorf("DefaultWorkspaceID = %q", cfg.DefaultWorkspaceID)
+	}
+}
+
+func TestLegacyKeyValueFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(tmpDir, ".config", "affinity"), 0o755)
+	cfgPath := affinityConfigPathUnderHome(tmpDir)
+	_ = os.WriteFile(cfgPath, []byte("AFFINE_BASE_URL=https://legacy.example.com\n"), 0o644)
+
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("AFFINE_CONFIG_FILE", "")
+	t.Setenv("AFFINE_BASE_URL", "")
+
+	cfg := Load()
+	if cfg.BaseURL != "https://legacy.example.com" {
+		t.Errorf("BaseURL = %q", cfg.BaseURL)
 	}
 }
