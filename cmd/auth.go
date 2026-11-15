@@ -27,7 +27,9 @@ var authStatusCmd = &cobra.Command{
 			"method":        "none",
 		}
 
-		if cfg.APIToken != "" {
+		if cfg.OIDCSession {
+			status["method"] = "oidc"
+		} else if cfg.APIToken != "" {
 			status["method"] = "api_token"
 		} else if cfg.Cookie != "" {
 			status["method"] = "cookie"

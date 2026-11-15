@@ -23,8 +23,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.GraphQLPath != "/graphql" {
 		t.Errorf("GraphQLPath = %q, want %q", cfg.GraphQLPath, "/graphql")
 	}
-	if cfg.WSClientVersion != "0.26.0" {
-		t.Errorf("WSClientVersion = %q, want %q", cfg.WSClientVersion, "0.26.0")
+	if cfg.WSClientVersion != "0.27.4" {
+		t.Errorf("WSClientVersion = %q, want %q", cfg.WSClientVersion, "0.27.4")
 	}
 }
 
@@ -102,7 +102,7 @@ func TestNormalizeURL(t *testing.T) {
 func TestLoadConfigFile(t *testing.T) {
 	// Create a temp config file
 	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".config", "affine-mcp")
+	configDir := filepath.Join(tmpDir, ".config", "affine-cli")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestLoadConfigFile(t *testing.T) {
 
 func TestEnvOverridesFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".config", "affine-mcp")
+	configDir := filepath.Join(tmpDir, ".config", "affine-cli")
 	_ = os.MkdirAll(configDir, 0o755)
 	_ = os.WriteFile(filepath.Join(configDir, "config"), []byte("AFFINE_BASE_URL=https://file.example.com\n"), 0o644)
 

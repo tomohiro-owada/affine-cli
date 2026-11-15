@@ -16,6 +16,7 @@ func init() {
 	userCmd.AddCommand(userUpdateProfileCmd)
 	userCmd.AddCommand(userUpdateSettingsCmd)
 	userCmd.AddCommand(userSignInCmd)
+	userCmd.AddCommand(userOAuthCallbackCmd)
 
 	userUpdateProfileCmd.Flags().String("name", "", "Display name")
 	userUpdateProfileCmd.Flags().String("avatar-url", "", "Avatar URL")
@@ -25,6 +26,7 @@ func init() {
 
 	userSignInCmd.Flags().String("email", "", "Email address")
 	userSignInCmd.Flags().String("password", "", "Password")
+	userSignInCmd.Flags().Bool("oidc", false, "Sign in through the configured OIDC provider")
 }
 
 var userCmd = &cobra.Command{
@@ -114,8 +116,19 @@ var userUpdateSettingsCmd = &cobra.Command{
 
 var userSignInCmd = &cobra.Command{
 	Use:   "sign-in",
-	Short: "Sign in with email and password",
+	Short: "Sign in with email/password or OIDC",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		oidc, _ := cmd.Flags().GetBool("oidc")
+		if oidc {
+			if err := auth.SignInOIDC(ctx(), cfg.BaseURL, cfg.WSClientVersion); err != nil {
+				return err
+			}
+			output.JSON(map[string]any{
+				"status": "authenticated",
+				"method": "oidc",
+			})
+			return nil
+		}
 		email, _ := cmd.Flags().GetString("email")
 		password, _ := cmd.Flags().GetString("password")
 		if email == "" {
@@ -137,5 +150,14 @@ var userSignInCmd = &cobra.Command{
 			"cookie": cookie,
 		})
 		return nil
+	},
+}
+
+var userOAuthCallbackCmd = &cobra.Command{
+	Use:    "oauth-callback URL",
+	Hidden: true,
+	Args:   cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return auth.DeliverOIDCCallback(args[0])
 	},
 }
