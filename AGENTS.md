@@ -6,7 +6,7 @@
 ## Quick Start
 
 ```bash
-# Set credentials (env vars or ~/.config/affine-mcp/config)
+# Set credentials (env vars or ~/.config/affine-cli/config)
 export AFFINE_BASE_URL=https://your-affine-instance.com
 export AFFINE_EMAIL=you@example.com
 export AFFINE_PASSWORD=your-password
@@ -94,6 +94,7 @@ Most commands require a workspace ID via `-w` flag or `AFFINE_WORKSPACE_ID` env 
 - `affine user me`
 - `affine user update-profile --name "Name"`
 - `affine user sign-in --email x --password y`
+- `affine user sign-in --oidc` (Linux)
 
 ### Auth
 - `affine auth status`
@@ -113,5 +114,6 @@ Error: message
 - Document ID: UUID or short alphanumeric (`yco8IHar80`)
 
 ## Configuration
-Config file: `~/.config/affine-mcp/config` (key=value format)
+Config file: `~/.config/affine-cli/config` (key=value format; the legacy
+`~/.config/affine-mcp/config` path remains a fallback)
 Env vars take precedence over config file.

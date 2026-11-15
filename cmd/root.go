@@ -31,6 +31,15 @@ var rootCmd = &cobra.Command{
 
 		cfg = config.Load()
 
+		if cfg.APIToken == "" && cfg.Cookie == "" && cmd != userSignInCmd && cmd != userOAuthCallbackCmd {
+			token, err := auth.SessionAccessToken(context.Background(), cfg.BaseURL, cfg.WSClientVersion)
+			if err != nil {
+				return fmt.Errorf("OIDC session: %w", err)
+			}
+			cfg.APIToken = token
+			cfg.OIDCSession = token != ""
+		}
+
 		// Override workspace ID from flag if provided
 		if ws, _ := cmd.Flags().GetString("workspace"); ws != "" {
 			cfg.DefaultWorkspaceID = ws

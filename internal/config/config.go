@@ -19,6 +19,7 @@ type Config struct {
 	DefaultWorkspaceID string
 	HeadersJSON        string
 	WSClientVersion    string
+	OIDCSession        bool
 }
 
 func Load() *Config {
@@ -33,7 +34,7 @@ func Load() *Config {
 		Password:           envOrFile("AFFINE_PASSWORD", fileVals, "password", ""),
 		DefaultWorkspaceID: envOrFile("AFFINE_WORKSPACE_ID", fileVals, "defaultWorkspaceId", ""),
 		HeadersJSON:        os.Getenv("AFFINE_HEADERS_JSON"),
-		WSClientVersion:    envOrDefault("AFFINE_WS_CLIENT_VERSION", "0.26.0"),
+		WSClientVersion:    envOrDefault("AFFINE_WS_CLIENT_VERSION", "0.27.4"),
 	}
 
 	c.BaseURL = normalizeURL(c.BaseURL)
@@ -59,8 +60,11 @@ func loadConfigFile() map[string]string {
 		return vals
 	}
 
-	path := filepath.Join(home, ".config", "affine-mcp", "config")
+	path := filepath.Join(home, ".config", "affine-cli", "config")
 	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		f, err = os.Open(filepath.Join(home, ".config", "affine-mcp", "config"))
+	}
 	if err != nil {
 		return vals
 	}

@@ -2,7 +2,8 @@
 
 A standalone CLI for [AFFiNE](https://affine.pro) — manage workspaces, documents, databases, tables, comments, tags, and more from your terminal.
 
-Built for **self-hosted AFFiNE** instances. Works with both email/password authentication and API tokens.
+Built for **self-hosted AFFiNE** instances. Works with email/password,
+native OIDC sessions, and API tokens.
 
 ## Features
 
@@ -14,6 +15,7 @@ Built for **self-hosted AFFiNE** instances. Works with both email/password authe
 - **Structured JSON output** — pipe-friendly, with `--fields` filtering
 - **Dry-run mode** — preview destructive operations before executing
 - **AI-agent friendly** — `affine schema` outputs full JSON Schema for all commands
+- **Native OIDC login** — browser authorization with automatic access-token refresh on Linux
 
 ## Installation
 
@@ -50,7 +52,18 @@ export AFFINE_API_TOKEN=your-token
 export AFFINE_WORKSPACE_ID=your-workspace-uuid
 ```
 
-Config file is also supported at `~/.config/affine-mcp/config` (key=value format). Environment variables take precedence.
+Config file is also supported at `~/.config/affine-cli/config` (key=value
+format). Environment variables take precedence. The legacy
+`~/.config/affine-mcp/config` path remains a fallback.
+
+For a self-hosted server with OIDC configured:
+
+```bash
+affine user sign-in --oidc
+```
+
+The native session is stored with mode `0600` under
+`~/.config/affine-cli/sessions.json` and refreshed automatically.
 
 ## Quick Start
 
@@ -151,7 +164,8 @@ affine comment resolve --id ID --resolved          # Resolve comment
 
 ```bash
 affine auth status                                # Check auth status
-affine auth sign-in --email E --password P         # Sign in
+affine user sign-in --email E --password P         # Password sign in
+affine user sign-in --oidc                         # Browser OIDC sign in (Linux)
 affine user me                                    # Current user info
 affine user update-profile --name "Name"           # Update profile
 affine user update-settings --receive-comment-notification  # Update settings
